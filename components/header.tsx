@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 export function Header({ className }: { className?: string }) {
   return (
     <header className={cn("flex items-center justify-between p-4", className)}>
-      <Link href="/" className="text-2xl font-bold text-primary hover:text-primary-foreground transition-colors">
+      <Link href="/" className="text-2xl font-bold text-primary hover:text-primary-foreground transition-colors ml-4">
         Bioseeq
       </Link>
       <nav className="flex items-center space-x-4">
