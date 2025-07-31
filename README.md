@@ -1,4 +1,4 @@
-# Bioseeq Cancer Detection Project
+# Bioseeq 
 
 This project is a web application for cancer detection from medical images and datasets. It includes a Next.js frontend and a Flask API backend that uses a trained neural network model for breast cancer prediction.
 
