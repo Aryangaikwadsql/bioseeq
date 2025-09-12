@@ -1,51 +1,97 @@
-import pandas as pd
-import numpy as np
+import os
 import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import EfficientNetB0
+from tensorflow.keras.layers import Dense, GlobalAveragePooling2D
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+import matplotlib.pyplot as plt
+import numpy as np
 
-# Load dataset
-data = pd.read_csv('../breast-cancer (1).csv')
+# Paths to image datasets (user should download and set these paths)
+breast_cancer_dir = 'data/CBIS-DDSM/breast'
+lung_cancer_dir = 'data/LIDC-IDRI/lung'
 
-# Map diagnosis to binary values
-data['diagnosis'] = data['diagnosis'].map({'B': 0, 'M': 1})
+# Image parameters
+IMG_SIZE = (224, 224)
+BATCH_SIZE = 32
 
-# Prepare features and labels
-X = data.drop(['diagnosis', 'id', 'Unnamed: 32'], axis=1, errors='ignore')
-y = data['diagnosis']
-
-# Split data into train and test sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-# Scale features
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train)
-X_test = scaler.transform(X_test)
-
-# Build model
-model = Sequential([
-    Dense(31, activation='relu', input_shape=(X_train.shape[1],)),
-    Dense(25, activation='relu'),
-    Dense(20, activation='relu'),
-    Dense(1, activation='sigmoid')
-])
-
-model.compile(
-    loss='binary_crossentropy',
-    optimizer=tf.keras.optimizers.Adam(learning_rate=0.01),
-    metrics=['accuracy']
+# Data generators with augmentation for training
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=0.2,
+    rotation_range=20,
+    width_shift_range=0.2,
+    height_shift_range=0.2,
+    shear_range=0.15,
+    zoom_range=0.15,
+    horizontal_flip=True,
+    fill_mode='nearest'
 )
 
-# Train model
-model.fit(X_train, y_train, epochs=200, batch_size=32, verbose=2)
+train_generator = train_datagen.flow_from_directory(
+    breast_cancer_dir,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode='binary',
+    subset='training'
+)
 
-# Evaluate model
-loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
-print(f'Test Accuracy: {accuracy * 100:.2f}%')
+validation_generator = train_datagen.flow_from_directory(
+    breast_cancer_dir,
+    target_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    class_mode='binary',
+    subset='validation'
+)
 
-# Save model and scaler
-model.save('breast_cancer_model.h5')
-import joblib
-joblib.dump(scaler, 'scaler.save')
+# Load EfficientNetB0 base model with ImageNet weights
+base_model = EfficientNetB0(weights='imagenet', include_top=False, input_shape=(*IMG_SIZE, 3))
+
+# Freeze base model layers
+base_model.trainable = False
+
+# Add custom classification head
+x = base_model.output
+x = GlobalAveragePooling2D()(x)
+x = Dense(128, activation='relu')(x)
+predictions = Dense(1, activation='sigmoid')(x)
+
+model = Model(inputs=base_model.input, outputs=predictions)
+
+model.compile(optimizer=Adam(learning_rate=0.001),
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+# Train the model
+history = model.fit(
+    train_generator,
+    validation_data=validation_generator,
+    epochs=10
+)
+
+# Unfreeze some layers and fine-tune
+base_model.trainable = True
+fine_tune_at = 100
+
+for layer in base_model.layers[:fine_tune_at]:
+    layer.trainable = False
+
+model.compile(optimizer=Adam(learning_rate=0.0001),
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+fine_tune_epochs = 10
+total_epochs = 10 + fine_tune_epochs
+
+history_fine = model.fit(
+    train_generator,
+    validation_data=validation_generator,
+    epochs=total_epochs,
+    initial_epoch=history.epoch[-1]
+)
+
+# Save the fine-tuned model
+model.save('breast_cancer_image_model.h5')
+
+# Note: Grad-CAM implementation will be added separately

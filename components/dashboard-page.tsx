@@ -20,7 +20,7 @@ import { cn } from "@/lib/utils"
 type ScanResult = {
   id: string
   timestamp: string
-  imagePreview: string
+  fileName: string
   prediction: string
   confidence: number
   gradCamUrl: string
@@ -29,7 +29,7 @@ type ScanResult = {
 
 export function DashboardPage() {
   const [file, setFile] = useState<File | null>(null)
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [fileName, setFileName] = useState<string | null>(null)
   const [prediction, setPrediction] = useState<string | null>(null)
   const [confidence, setConfidence] = useState<number | null>(null)
   const [gradCamUrl, setGradCamUrl] = useState<string | null>(null)
@@ -50,7 +50,7 @@ export function DashboardPage() {
       if (acceptedFiles.length > 0) {
         const selectedFile = acceptedFiles[0]
         setFile(selectedFile)
-        setImagePreview(URL.createObjectURL(selectedFile))
+        setFileName(selectedFile.name)
         setPrediction(null)
         setConfidence(null)
         setGradCamUrl(null)
@@ -68,9 +68,7 @@ export function DashboardPage() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: {
-      "image/jpeg": [],
-      "image/png": [],
-      "image/dicom": [], 
+      "image/*": [".png", ".jpg", ".jpeg", ".dcm"],
     },
     multiple: false,
   })
@@ -95,62 +93,63 @@ export function DashboardPage() {
     const formData = new FormData()
     formData.append("file", file)
 
-    try {
-      // Simulate upload progress
-      let currentProgress = 0
-      const interval = setInterval(() => {
-        currentProgress += 10
-        if (currentProgress <= 90) {
-          setProgress(currentProgress)
-        } else {
-          clearInterval(interval)
+      try {
+        // Simulate upload progress
+        let currentProgress = 0
+        const interval = setInterval(() => {
+          currentProgress += 10
+          if (currentProgress <= 90) {
+            setProgress(currentProgress)
+          } else {
+            clearInterval(interval)
+          }
+        }, 200)
+
+        const response = await fetch("http://localhost:8000/predict/image", {
+          method: "POST",
+          body: formData,
+        })
+
+        clearInterval(interval)
+        setProgress(100)
+
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(`HTTP error! status: ${response.status} - ${errorData.error || 'Unknown error'}`)
         }
-      }, 200)
 
-      const response = await fetch("http://localhost:5000/api/predict", {
-        method: "POST",
-        body: formData,
-      })
+        const data = await response.json()
+        setPrediction(data.prediction)
+        setConfidence(data.confidence)
+        setGradCamUrl(null) // No Grad-CAM for tabular data
+        setSummary(data.summary)
 
-      clearInterval(interval)
-      setProgress(100)
+        const newScan: ScanResult = {
+          id: Date.now().toString(),
+          timestamp: new Date().toLocaleString(),
+          fileName: fileName!,
+          prediction: data.prediction,
+          confidence: data.confidence,
+          gradCamUrl: "",
+          summary: data.summary,
+        }
+        setScanHistory((prevHistory) => [newScan, ...prevHistory])
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        toast({
+          title: "Analysis Complete!",
+          description: `Prediction: ${data.prediction} with ${data.confidence}% confidence.`,
+          variant: data.prediction === "Cancer" ? "destructive" : "default",
+        })
+      } catch (error) {
+        console.error("Upload failed:", error)
+        toast({
+          title: "Upload Failed",
+          description: (error as Error).message || "There was an error processing your scan. Please try again.",
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
       }
-
-      const data = await response.json()
-      setPrediction(data.prediction)
-      setConfidence(data.confidence)
-      setGradCamUrl(data.gradCamUrl)
-      setSummary(data.summary)
-
-      const newScan: ScanResult = {
-        id: Date.now().toString(),
-        timestamp: new Date().toLocaleString(),
-        imagePreview: imagePreview!,
-        prediction: data.prediction,
-        confidence: data.confidence,
-        gradCamUrl: data.gradCamUrl,
-        summary: data.summary,
-      }
-      setScanHistory((prevHistory) => [newScan, ...prevHistory])
-
-      toast({
-        title: "Analysis Complete!",
-        description: `Prediction: ${data.prediction} with ${data.confidence}% confidence.`,
-        variant: data.prediction === "Cancer" ? "destructive" : "default",
-      })
-    } catch (error) {
-      console.error("Upload failed:", error)
-      toast({
-        title: "Upload Failed",
-        description: "There was an error processing your scan. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setLoading(false)
-    }
   }
 
   const handleDownloadReport = () => {
@@ -233,8 +232,8 @@ export function DashboardPage() {
         <div className="lg:col-span-2 space-y-8">
           <Card className="bg-card text-card-foreground shadow-lg">
             <CardHeader>
-              <CardTitle className="text-3xl font-bold">Upload Medical Scan</CardTitle>
-              <CardDescription>Drag and drop your image file or click to upload.</CardDescription>
+              <CardTitle className="text-3xl font-bold">Upload Breast Cancer Scan</CardTitle>
+              <CardDescription>Drag and drop your medical image (PNG, JPG, JPEG, DICOM) or click to upload.</CardDescription>
             </CardHeader>
             <CardContent>
               <div
@@ -255,17 +254,17 @@ export function DashboardPage() {
                 )}
                 <p className="text-sm text-muted-foreground mt-2">Supported formats: JPG, PNG, DICOM</p>
               </div>
-              {imagePreview && (
+              {file && (
                 <div className="mt-6 flex flex-col items-center">
-                  <h3 className="text-xl font-semibold mb-4">Preview:</h3>
-                  <div className="relative w-full max-w-md h-64 border border-border rounded-md overflow-hidden bg-muted/20">
-                    <Image
-                      src={imagePreview || "/placeholder.svg"}
-                      alt="Image Preview"
-                      fill
-                      className="object-contain"
-                    />
-                  </div>
+                  <h3 className="text-xl font-semibold mb-4">Selected Image:</h3>
+                  <Image
+                    src={URL.createObjectURL(file)}
+                    alt="Selected scan"
+                    width={200}
+                    height={200}
+                    className="rounded-md border border-border"
+                  />
+                  <p className="text-lg text-muted-foreground mt-2">{fileName}</p>
                   <Button onClick={handleUpload} disabled={loading} className="mt-6 px-8 py-3 text-lg">
                     {loading ? "Analyzing..." : "Analyze Scan"}
                   </Button>
@@ -342,13 +341,8 @@ export function DashboardPage() {
                         key={scan.id}
                         className="bg-muted/20 border-border p-4 flex items-center space-x-4 transition-all duration-200 hover:bg-muted/30"
                       >
-                        <div className="relative w-20 h-20 flex-shrink-0 rounded-md overflow-hidden border border-border">
-                          <Image
-                            src={scan.imagePreview || "/placeholder.svg"}
-                            alt="Scan Thumbnail"
-                            fill
-                            className="object-cover"
-                          />
+                        <div className="w-20 h-20 flex-shrink-0 rounded-md border border-border bg-muted/20 flex items-center justify-center">
+                          <p className="text-xs text-center text-muted-foreground">{scan.fileName}</p>
                         </div>
                         <div className="flex-1">
                           <p className="text-sm text-muted-foreground">{scan.timestamp}</p>
@@ -364,7 +358,7 @@ export function DashboardPage() {
                             variant="link"
                             className="p-0 h-auto text-sm text-primary hover:text-primary-foreground"
                             onClick={() => {
-                              setImagePreview(scan.imagePreview)
+                              setFileName(scan.fileName)
                               setPrediction(scan.prediction)
                               setConfidence(scan.confidence)
                               setGradCamUrl(scan.gradCamUrl)
